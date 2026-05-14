@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
+import { authenticate } from "@/lib/authenticate";
 import { getProduct } from "@/lib/inventory-store";
 import { errorResponse } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { id: string } },
 ) {
+  const authError = await authenticate(request);
+  if (authError) return authError;
   try {
     const product = await getProduct(params.id);
     if (!product) return errorResponse(404, "Product not found");

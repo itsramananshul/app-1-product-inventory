@@ -19,17 +19,17 @@ const actionLabels: Record<ActionKind, { title: string; verb: string; tone: stri
   reserve: {
     title: "Reserve units",
     verb: "Reserve",
-    tone: "bg-sky-500 hover:bg-sky-400 focus-visible:ring-sky-400",
+    tone: "bg-blue-500 hover:bg-blue-600 focus-visible:ring-blue-400",
   },
   release: {
     title: "Release reservation",
     verb: "Release",
-    tone: "bg-indigo-500 hover:bg-indigo-400 focus-visible:ring-indigo-400",
+    tone: "bg-gray-700 hover:bg-gray-800 focus-visible:ring-gray-400",
   },
   restock: {
     title: "Restock on-hand",
     verb: "Restock",
-    tone: "bg-emerald-500 hover:bg-emerald-400 focus-visible:ring-emerald-400",
+    tone: "bg-teal-500 hover:bg-teal-600 focus-visible:ring-teal-400",
   },
 };
 
@@ -64,22 +64,22 @@ export function QuantityModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="quantity-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 p-4 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget && !busy) onCancel();
       }}
     >
-      <div className="w-full max-w-md rounded-xl bg-slate-900 p-6 shadow-2xl ring-1 ring-slate-700">
+      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl ring-1 ring-gray-100">
         <h2
           id="quantity-modal-title"
-          className="text-lg font-semibold text-slate-100"
+          className="text-lg font-semibold text-gray-900"
         >
           {labels.title}
         </h2>
-        <p className="mt-1 text-sm text-slate-400">
-          <span className="font-medium text-slate-300">{productName}</span>
-          <span className="mx-2 text-slate-600">·</span>
-          <span className="font-mono text-xs text-slate-500">{sku}</span>
+        <p className="mt-1 text-sm text-gray-500">
+          <span className="font-medium text-gray-800">{productName}</span>
+          <span className="mx-2 text-gray-300">·</span>
+          <span className="font-mono text-xs text-gray-400">{sku}</span>
         </p>
 
         <form
@@ -91,7 +91,7 @@ export function QuantityModal({
           }}
         >
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
+            <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
               Quantity
             </span>
             <input
@@ -102,12 +102,12 @@ export function QuantityModal({
               value={value}
               onChange={(e) => setValue(e.target.value)}
               disabled={busy}
-              className="mt-2 w-full rounded-lg border-0 bg-slate-800 px-3 py-2 text-slate-100 ring-1 ring-inset ring-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-60"
+              className="mt-2 w-full rounded-lg border-0 bg-gray-50 px-3 py-2 text-gray-900 ring-1 ring-inset ring-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-60"
             />
           </label>
 
           {errorMessage ? (
-            <p className="rounded-md bg-rose-500/10 px-3 py-2 text-sm text-rose-300 ring-1 ring-inset ring-rose-500/30">
+            <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-inset ring-rose-200">
               {errorMessage}
             </p>
           ) : null}
@@ -117,7 +117,7 @@ export function QuantityModal({
               type="button"
               onClick={onCancel}
               disabled={busy}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-60"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 disabled:opacity-60"
             >
               Cancel
             </button>

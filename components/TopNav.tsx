@@ -1,23 +1,41 @@
 "use client";
 
+export type NavView =
+  | "dashboard"
+  | "products"
+  | "sales"
+  | "purchase"
+  | "inventory-plan";
+
 interface TopNavProps {
   instanceName: string;
+  currentView: NavView;
+  onChangeView: (view: NavView) => void;
   onOpenApiKeys: () => void;
 }
 
-const NAV_ITEMS: { label: string; active?: boolean }[] = [
-  { label: "Dashboard", active: true },
-  { label: "Products" },
-  { label: "Sales" },
-  { label: "Purchase" },
-  { label: "Inventory Plan" },
+const NAV_ITEMS: { key: NavView; label: string }[] = [
+  { key: "dashboard", label: "Dashboard" },
+  { key: "products", label: "Products" },
+  { key: "sales", label: "Sales" },
+  { key: "purchase", label: "Purchase" },
+  { key: "inventory-plan", label: "Inventory Plan" },
 ];
 
-export function TopNav({ instanceName, onOpenApiKeys }: TopNavProps) {
+export function TopNav({
+  instanceName,
+  currentView,
+  onChangeView,
+  onOpenApiKeys,
+}: TopNavProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-gray-200 bg-white">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-6">
-        <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onChangeView("dashboard")}
+          className="flex items-center gap-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+        >
           <svg
             viewBox="0 0 24 24"
             fill="none"
@@ -33,25 +51,29 @@ export function TopNav({ instanceName, onOpenApiKeys }: TopNavProps) {
             <line x1="12" y1="22.08" x2="12" y2="12" />
           </svg>
           <span className="text-lg font-semibold text-gray-900">Inventory</span>
-        </div>
+        </button>
 
         <nav className="hidden gap-1 md:flex">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              className={`relative px-3 py-5 text-sm font-medium transition-colors ${
-                item.active
-                  ? "text-teal-600"
-                  : "text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              {item.label}
-              {item.active ? (
-                <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-teal-500" />
-              ) : null}
-            </button>
-          ))}
+          {NAV_ITEMS.map((item) => {
+            const active = item.key === currentView;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => onChangeView(item.key)}
+                className={`relative px-3 py-5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 rounded ${
+                  active
+                    ? "text-teal-600"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                {item.label}
+                {active ? (
+                  <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-teal-500" />
+                ) : null}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="ml-auto flex items-center gap-1">

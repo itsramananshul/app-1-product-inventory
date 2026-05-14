@@ -4,9 +4,10 @@ interface MetricCardProps {
   label: string;
   value: number | string;
   hint?: string;
+  onViewDetail?: () => void;
 }
 
-export function MetricCard({ label, value, hint }: MetricCardProps) {
+export function MetricCard({ label, value, hint, onViewDetail }: MetricCardProps) {
   return (
     <div className="flex flex-col rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100 transition-shadow hover:shadow-md">
       <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
@@ -20,7 +21,9 @@ export function MetricCard({ label, value, hint }: MetricCardProps) {
       )}
       <button
         type="button"
-        className="mt-3 inline-flex items-center gap-1 self-start text-xs font-medium text-teal-600 hover:text-teal-700"
+        onClick={onViewDetail}
+        disabled={!onViewDetail}
+        className="mt-3 inline-flex items-center gap-1 self-start rounded text-xs font-medium text-teal-600 hover:text-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 disabled:cursor-default disabled:text-gray-300"
       >
         View detail
         <svg

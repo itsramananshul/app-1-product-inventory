@@ -2,34 +2,51 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export type ActionKind = "reserve" | "release" | "restock";
+export type ActionKind = "reserve" | "release" | "restock" | "adjust";
 
 interface QuantityModalProps {
   open: boolean;
   action: ActionKind;
   productName: string;
   sku: string;
+  defaultQuantity?: number;
   busy?: boolean;
   errorMessage?: string | null;
   onCancel: () => void;
   onSubmit: (quantity: number) => void;
 }
 
-const actionLabels: Record<ActionKind, { title: string; verb: string; tone: string }> = {
+const actionLabels: Record<
+  ActionKind,
+  { title: string; verb: string; tone: string; helper: string; allowZero: boolean }
+> = {
   reserve: {
     title: "Reserve units",
     verb: "Reserve",
     tone: "bg-blue-500 hover:bg-blue-600 focus-visible:ring-blue-400",
+    helper: "Move units from on-hand into the reserved bucket.",
+    allowZero: false,
   },
   release: {
     title: "Release reservation",
     verb: "Release",
     tone: "bg-gray-700 hover:bg-gray-800 focus-visible:ring-gray-400",
+    helper: "Move units back from reserved to available.",
+    allowZero: false,
   },
   restock: {
     title: "Restock on-hand",
     verb: "Restock",
     tone: "bg-teal-500 hover:bg-teal-600 focus-visible:ring-teal-400",
+    helper: "Add units to the on-hand quantity.",
+    allowZero: false,
+  },
+  adjust: {
+    title: "Adjust on-hand",
+    verb: "Save",
+    tone: "bg-teal-500 hover:bg-teal-600 focus-visible:ring-teal-400",
+    helper: "Set the on-hand quantity to an exact value.",
+    allowZero: true,
   },
 };
 
@@ -38,6 +55,7 @@ export function QuantityModal({
   action,
   productName,
   sku,
+  defaultQuantity,
   busy = false,
   errorMessage,
   onCancel,
@@ -48,16 +66,24 @@ export function QuantityModal({
 
   useEffect(() => {
     if (open) {
-      setValue("1");
-      requestAnimationFrame(() => inputRef.current?.focus());
+      const initial =
+        typeof defaultQuantity === "number" && Number.isInteger(defaultQuantity)
+          ? String(Math.max(0, defaultQuantity))
+          : "1";
+      setValue(initial);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
     }
-  }, [open, action, sku]);
+  }, [open, action, sku, defaultQuantity]);
 
   if (!open) return null;
 
   const labels = actionLabels[action];
   const parsed = Number.parseInt(value, 10);
-  const isValid = Number.isInteger(parsed) && parsed > 0;
+  const min = labels.allowZero ? 0 : 1;
+  const isValid = Number.isInteger(parsed) && parsed >= min;
 
   return (
     <div
@@ -81,6 +107,7 @@ export function QuantityModal({
           <span className="mx-2 text-gray-300">·</span>
           <span className="font-mono text-xs text-gray-400">{sku}</span>
         </p>
+        <p className="mt-2 text-xs text-gray-400">{labels.helper}</p>
 
         <form
           className="mt-5 space-y-4"
@@ -92,12 +119,12 @@ export function QuantityModal({
         >
           <label className="block">
             <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
-              Quantity
+              {action === "adjust" ? "New on-hand quantity" : "Quantity"}
             </span>
             <input
               ref={inputRef}
               type="number"
-              min={1}
+              min={min}
               step={1}
               value={value}
               onChange={(e) => setValue(e.target.value)}

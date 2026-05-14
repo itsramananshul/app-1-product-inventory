@@ -44,6 +44,7 @@ export type StoreError =
   | { kind: "invalid_quantity" }
   | { kind: "reserve_exceeds_on_hand" }
   | { kind: "release_below_zero" }
+  | { kind: "adjust_below_reserved" }
   | { kind: "db_error"; message: string };
 
 export type MutationResult =
@@ -197,4 +198,36 @@ export function restock(
     () => null,
     (row, qty) => ({ on_hand: row.on_hand + qty }),
   );
+}
+
+function validateNonNegativeInt(quantity: unknown): number | null {
+  if (typeof quantity !== "number" || !Number.isFinite(quantity)) return null;
+  if (!Number.isInteger(quantity)) return null;
+  if (quantity < 0) return null;
+  return quantity;
+}
+
+export async function adjust(
+  id: string,
+  quantity: unknown,
+): Promise<MutationResult> {
+  const qty = validateNonNegativeInt(quantity);
+  if (qty === null) return { ok: false, error: { kind: "invalid_quantity" } };
+
+  try {
+    const row = await readRow(id);
+    if (!row) return { ok: false, error: { kind: "not_found" } };
+
+    if (qty < row.reserved) {
+      return { ok: false, error: { kind: "adjust_below_reserved" } };
+    }
+
+    const updated = await writeRow(id, { on_hand: qty });
+    if (!updated) return { ok: false, error: { kind: "not_found" } };
+
+    return { ok: true, product: toView(updated) };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Database error";
+    return { ok: false, error: { kind: "db_error", message } };
+  }
 }

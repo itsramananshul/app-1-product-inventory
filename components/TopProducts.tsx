@@ -1,15 +1,16 @@
 "use client";
 
 import type { ProductView } from "@/lib/types";
+import type { ActionKind } from "./QuantityModal";
 
 interface TopProductsProps {
   products: ProductView[];
+  onAction: (product: ProductView, action: ActionKind) => void;
+  onViewAll: () => void;
 }
 
-export function TopProducts({ products }: TopProductsProps) {
-  const top = [...products]
-    .sort((a, b) => b.onHand - a.onHand)
-    .slice(0, 6);
+export function TopProducts({ products, onAction, onViewAll }: TopProductsProps) {
+  const top = [...products].sort((a, b) => b.onHand - a.onHand).slice(0, 6);
 
   return (
     <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
@@ -22,7 +23,8 @@ export function TopProducts({ products }: TopProductsProps) {
         </div>
         <button
           type="button"
-          className="inline-flex items-center gap-1 text-xs font-medium text-teal-600 hover:text-teal-700"
+          onClick={onViewAll}
+          className="inline-flex items-center gap-1 text-xs font-medium text-teal-600 hover:text-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 rounded"
         >
           View all
           <svg
@@ -43,7 +45,7 @@ export function TopProducts({ products }: TopProductsProps) {
         {top.map((p) => (
           <div
             key={p.id}
-            className="rounded-lg border border-gray-100 bg-gray-50 p-3 transition-colors hover:border-teal-200 hover:bg-teal-50/50"
+            className="group rounded-lg border border-gray-100 bg-gray-50 p-3 transition-colors hover:border-teal-200 hover:bg-teal-50/50"
           >
             <div className="flex h-12 w-12 items-center justify-center rounded-md bg-white text-teal-600 shadow-sm">
               <svg
@@ -73,6 +75,22 @@ export function TopProducts({ products }: TopProductsProps) {
             <p className="mt-1.5 text-xs text-gray-500">
               <span className="font-medium text-gray-700">{p.onHand}</span> on hand
             </p>
+            <div className="mt-2 flex gap-1">
+              <button
+                type="button"
+                onClick={() => onAction(p, "restock")}
+                className="flex-1 rounded-md bg-teal-50 px-2 py-1 text-[10px] font-medium text-teal-700 hover:bg-teal-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400"
+              >
+                Restock
+              </button>
+              <button
+                type="button"
+                onClick={() => onAction(p, "adjust")}
+                className="flex-1 rounded-md bg-white px-2 py-1 text-[10px] font-medium text-gray-700 ring-1 ring-inset ring-gray-200 hover:bg-gray-50 hover:text-teal-700 hover:ring-teal-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400"
+              >
+                Adjust
+              </button>
+            </div>
           </div>
         ))}
         {top.length === 0 ? (

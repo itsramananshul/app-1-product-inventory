@@ -38,6 +38,11 @@ export function mutationErrorResponse(error: StoreError) {
       return errorResponse(409, "Cannot reserve more than on-hand quantity.");
     case "release_below_zero":
       return errorResponse(409, "Cannot release more than currently reserved.");
+    case "adjust_below_reserved":
+      return errorResponse(
+        409,
+        "Cannot adjust on-hand below currently reserved units.",
+      );
     case "db_error":
       return errorResponse(500, `Database error: ${error.message}`);
   }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { authenticate } from "@/lib/authenticate";
 import { getProduct } from "@/lib/inventory-store";
-import { errorResponse } from "@/lib/api-helpers";
+import { CORS_HEADERS, errorResponse, optionsResponse } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +14,11 @@ export async function GET(
   try {
     const product = await getProduct(params.id);
     if (!product) return errorResponse(404, "Product not found");
-    return NextResponse.json(product);
+    return NextResponse.json(product, { headers: CORS_HEADERS });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load product";
     return errorResponse(500, message);
   }
 }
+
+export const OPTIONS = optionsResponse;

@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
+import { authenticate } from "@/lib/authenticate";
 import { productCount } from "@/lib/inventory-store";
-import { errorResponse } from "@/lib/api-helpers";
+import { CORS_HEADERS, errorResponse, optionsResponse } from "@/lib/api-helpers";
 import type { StatusResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = await authenticate(request);
+  if (authError) return authError;
   try {
     const count = await productCount();
     const payload: StatusResponse = {
@@ -15,9 +18,11 @@ export async function GET() {
       health: "ok",
       timestamp: new Date().toISOString(),
     };
-    return NextResponse.json(payload);
+    return NextResponse.json(payload, { headers: CORS_HEADERS });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Status check failed";
     return errorResponse(500, message);
   }
 }
+
+export const OPTIONS = optionsResponse;

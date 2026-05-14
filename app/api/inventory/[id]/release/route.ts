@@ -1,6 +1,11 @@
 import { authenticate } from "@/lib/authenticate";
 import { release } from "@/lib/inventory-store";
-import { errorResponse, handleMutation, readJsonBody } from "@/lib/api-helpers";
+import {
+  errorResponse,
+  handleMutation,
+  optionsResponse,
+  readJsonBody,
+} from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -14,3 +19,5 @@ export async function POST(
   if (!body) return errorResponse(400, "Invalid JSON body");
   return handleMutation(await release(params.id, body.quantity));
 }
+
+export const OPTIONS = optionsResponse;

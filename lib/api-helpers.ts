@@ -2,10 +2,26 @@ import { NextResponse } from "next/server";
 import type { MutationResult, StoreError } from "./inventory-store";
 import type { ApiErrorBody, MutationSuccessBody } from "./types";
 
+export const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "x-api-key, content-type",
+} as const;
+
+export function optionsResponse() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "x-api-key, content-type",
+    },
+  });
+}
+
 export function errorResponse(status: number, message: string) {
   return NextResponse.json<ApiErrorBody>(
     { success: false, error: message },
-    { status },
+    { status, headers: CORS_HEADERS },
   );
 }
 
@@ -41,10 +57,10 @@ export async function readJsonBody(
 
 export function handleMutation(result: MutationResult) {
   if (result.ok) {
-    return NextResponse.json<MutationSuccessBody>({
-      success: true,
-      product: result.product,
-    });
+    return NextResponse.json<MutationSuccessBody>(
+      { success: true, product: result.product },
+      { headers: CORS_HEADERS },
+    );
   }
   return mutationErrorResponse(result.error);
 }

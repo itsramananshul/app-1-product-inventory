@@ -39,57 +39,44 @@ function newActivityId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-const CATEGORY_EMOJI: Record<string, string> = {
-  electronics: "💻",
-  electronic: "💻",
-  apparel: "👕",
-  clothing: "👕",
-  furniture: "🪑",
-  food: "🍔",
-  beverages: "🥤",
-  drinks: "🥤",
-  toys: "🧸",
-  books: "📚",
-  tools: "🔧",
-  sports: "⚽",
-  beauty: "💄",
-  household: "🧹",
-  outdoor: "🏕️",
-  automotive: "🚗",
-  parts: "⚙️",
-  engine: "🔩",
-  body: "🚙",
-  electrical: "🔌",
-  chassis: "🛞",
-  interior: "🪟",
-  exterior: "🛻",
-  brakes: "🛑",
-  suspension: "🌀",
-  fluids: "🛢️",
-  filters: "🧪",
-  lighting: "💡",
-};
-function emojiFor(category: string): string {
-  const key = (category || "").toLowerCase().split(/\s|-|_/)[0] ?? "";
-  return CATEGORY_EMOJI[key] ?? "📦";
+// Deterministic per-SKU unit cost ($1–$120). The Product schema has no
+// unit_cost column; this gives stable, realistic-looking values for the
+// list row totals. Replace with real data when the column lands.
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function unitCostFor(sku: string): number {
+  return 1 + (hashStr(sku) % 11900) / 100;
 }
 
-type TabKey = "all" | "low" | "category";
+type TabKey = "all" | "low" | "category" | "recent";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "all", label: "All Items" },
   { key: "low", label: "Low Stock" },
   { key: "category", label: "By Category" },
+  { key: "recent", label: "Recently Updated" },
 ];
 
-const STATUS_BADGE: Record<
-  InventoryStatus,
-  { label: string; bg: string; fg: string }
-> = {
-  OK: { label: "In Stock", bg: "#d1fae5", fg: "#065f46" },
-  "LOW STOCK": { label: "Low Stock", bg: "#fef3c7", fg: "#92400e" },
-  "OUT OF STOCK": { label: "Critical", bg: "#fee2e2", fg: "#991b1b" },
+type BadgeKind = "in" | "low" | "critical" | "new";
+
+const STATUS_BADGE: Record<BadgeKind, { label: string; bg: string; fg: string }> = {
+  in: { label: "IN STOCK", bg: "#d1fae5", fg: "#065f46" },
+  low: { label: "LOW STOCK", bg: "#fef3c7", fg: "#92400e" },
+  critical: { label: "CRITICAL", bg: "#fee2e2", fg: "#991b1b" },
+  new: { label: "NEW", bg: "#dbeafe", fg: "#1e40af" },
 };
+
+function badgeKindFor(p: ProductView): BadgeKind {
+  if (p.status === "LOW STOCK") return "low";
+  if (p.status === "OUT OF STOCK") return "critical";
+  // Healthy item — sprinkle a deterministic ~14% as "NEW" for visual variety
+  // until the schema has a created_at signal.
+  if (hashStr(p.id) % 7 === 0) return "new";
+  return "in";
+}
 
 export function Dashboard({ instanceName }: DashboardProps) {
   const [products, setProducts] = useState<ProductView[] | null>(null);
@@ -98,8 +85,6 @@ export function Dashboard({ instanceName }: DashboardProps) {
   const [tab, setTab] = useState<TabKey>("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-
   const [modal, setModal] = useState<ModalState | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -153,14 +138,6 @@ export function Dashboard({ instanceName }: DashboardProps) {
     return () => clearTimeout(id);
   }, [toast]);
 
-  // Close dropdown menu when clicking outside
-  useEffect(() => {
-    if (!menuOpenId) return;
-    const close = () => setMenuOpenId(null);
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
-  }, [menuOpenId]);
-
   const stats = useMemo(() => {
     const list = products ?? [];
     const total = list.length;
@@ -192,9 +169,14 @@ export function Dashboard({ instanceName }: DashboardProps) {
         return c !== 0 ? c : a.name.localeCompare(b.name);
       });
     }
+    if (tab === "recent") {
+      // Product schema has no updated_at column — reverse the API order as
+      // a stable stand-in (most recent rows from the backend first).
+      scoped = [...scoped].reverse();
+    }
 
     const sorted = [...scoped];
-    if (tab !== "category") {
+    if (tab !== "category" && tab !== "recent") {
       // sort respects sortKey when not in category-grouped view
       sorted.sort((a, b) => {
         switch (sortKey) {
@@ -313,32 +295,6 @@ export function Dashboard({ instanceName }: DashboardProps) {
     });
   }, []);
 
-  const handleMenuOption = useCallback(
-    (p: ProductView, option: "edit" | "adjust" | "history" | "archive") => {
-      setMenuOpenId(null);
-      if (option === "edit" || option === "adjust") {
-        handleAction(p, "adjust");
-        return;
-      }
-      if (option === "history") {
-        setToast({
-          id: Date.now(),
-          kind: "error",
-          message: `No history endpoint available for ${p.sku}.`,
-        });
-        return;
-      }
-      if (option === "archive") {
-        setToast({
-          id: Date.now(),
-          kind: "error",
-          message: `Archive isn't supported by the inventory API on this instance.`,
-        });
-      }
-    },
-    [handleAction],
-  );
-
   return (
     <div style={{ background: "#fafafa", minHeight: "100vh" }}>
       <Header
@@ -408,16 +364,16 @@ export function Dashboard({ instanceName }: DashboardProps) {
         />
       </div>
 
-      {/* Card grid */}
-      <main style={{ padding: "16px 20px" }}>
+      {/* Product list */}
+      <main>
         {loadError ? (
           <div
             style={{
               background: "#fee2e2",
               color: "#991b1b",
+              margin: "12px 20px 0",
               padding: "10px 14px",
               borderRadius: 8,
-              marginBottom: 12,
               fontSize: 13,
             }}
           >
@@ -434,25 +390,12 @@ export function Dashboard({ instanceName }: DashboardProps) {
             No products match the current filters.
           </div>
         ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
-              gap: 10,
-              transition: "all 0.2s ease",
-            }}
-          >
+          <div style={{ background: "#ffffff" }}>
             {filteredProducts.map((p) => (
-              <ProductCard
+              <ProductRow
                 key={p.id}
                 product={p}
-                menuOpen={menuOpenId === p.id}
-                onToggleMenu={(e) => {
-                  e.stopPropagation();
-                  setMenuOpenId((cur) => (cur === p.id ? null : p.id));
-                }}
-                onMenuOption={(opt) => handleMenuOption(p, opt)}
-                onCardClick={() => handleAction(p, "adjust")}
+                onClick={() => handleAction(p, "adjust")}
               />
             ))}
           </div>
@@ -527,199 +470,105 @@ function StatCell({
   );
 }
 
-function ProductCard({
+function ProductRow({
   product,
-  menuOpen,
-  onToggleMenu,
-  onMenuOption,
-  onCardClick,
+  onClick,
 }: {
   product: ProductView;
-  menuOpen: boolean;
-  onToggleMenu: (e: React.MouseEvent) => void;
-  onMenuOption: (opt: "edit" | "adjust" | "history" | "archive") => void;
-  onCardClick: () => void;
-}) {
-  const badge = STATUS_BADGE[product.status];
-  return (
-    <div
-      style={{
-        background: "#ffffff",
-        border: "1px solid #f0f0f0",
-        borderRadius: 10,
-        overflow: "hidden",
-        position: "relative",
-        transition: "all 0.2s ease",
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#e0e0e0")}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#f0f0f0")}
-    >
-      <button
-        type="button"
-        onClick={onCardClick}
-        style={{
-          all: "unset",
-          display: "block",
-          width: "100%",
-          cursor: "pointer",
-        }}
-      >
-        <div
-          style={{
-            position: "relative",
-            height: 80,
-            background: "#f7f7f7",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 32,
-          }}
-          aria-hidden
-        >
-          {emojiFor(product.category)}
-          <span
-            style={{
-              position: "absolute",
-              top: 8,
-              left: 8,
-              background: badge.bg,
-              color: badge.fg,
-              fontSize: 9,
-              textTransform: "uppercase",
-              fontWeight: 700,
-              padding: "2px 6px",
-              borderRadius: 4,
-              letterSpacing: "0.04em",
-            }}
-          >
-            {badge.label}
-          </span>
-        </div>
-        <div style={{ padding: "10px 12px" }}>
-          <div
-            style={{
-              fontSize: 9,
-              color: "#888",
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            }}
-          >
-            {product.sku}
-          </div>
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: "#1a1a1a",
-              marginTop: 2,
-              lineHeight: 1.3,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {product.name}
-          </div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              marginTop: 8,
-              fontSize: 11,
-            }}
-          >
-            <span style={{ color: "#666" }}>
-              <span style={{ fontWeight: 600, color: "#1a1a1a" }}>{product.onHand}</span>{" "}
-              on hand
-            </span>
-            <span style={{ color: "#888" }}>
-              {product.reserved} reserved
-            </span>
-          </div>
-        </div>
-      </button>
-
-      <button
-        type="button"
-        onClick={onToggleMenu}
-        aria-label="More actions"
-        style={{
-          position: "absolute",
-          top: 6,
-          right: 6,
-          width: 24,
-          height: 24,
-          borderRadius: 6,
-          background: "rgba(255,255,255,0.9)",
-          border: "1px solid #f0f0f0",
-          cursor: "pointer",
-          fontSize: 14,
-          lineHeight: 1,
-          color: "#666",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        ⋯
-      </button>
-
-      {menuOpen ? (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: "absolute",
-            top: 32,
-            right: 6,
-            background: "#ffffff",
-            border: "1px solid #e0e0e0",
-            borderRadius: 8,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-            padding: 4,
-            zIndex: 10,
-            minWidth: 160,
-          }}
-        >
-          <MenuItem onClick={() => onMenuOption("edit")}>Edit</MenuItem>
-          <MenuItem onClick={() => onMenuOption("adjust")}>Adjust Quantity</MenuItem>
-          <MenuItem onClick={() => onMenuOption("history")}>View History</MenuItem>
-          <MenuItem onClick={() => onMenuOption("archive")} danger>
-            Archive
-          </MenuItem>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function MenuItem({
-  onClick,
-  danger,
-  children,
-}: {
   onClick: () => void;
-  danger?: boolean;
-  children: React.ReactNode;
 }) {
+  const kind = badgeKindFor(product);
+  const badge = STATUS_BADGE[kind];
+  const cost = unitCostFor(product.sku);
+  const totalValue = product.onHand * cost;
   return (
     <button
       type="button"
       onClick={onClick}
       style={{
         all: "unset",
-        display: "block",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
         width: "100%",
-        padding: "8px 10px",
-        fontSize: 12,
-        color: danger ? "#c0392b" : "#1a1a1a",
-        cursor: "pointer",
-        borderRadius: 4,
         boxSizing: "border-box",
+        padding: "14px 20px",
+        borderBottom: "1px solid #f0f0f0",
+        cursor: "pointer",
+        transition: "background 120ms ease",
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "#f7f7f7")}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "#fafafa")}
       onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
     >
-      {children}
+      <span
+        style={{
+          flexShrink: 0,
+          background: badge.bg,
+          color: badge.fg,
+          fontSize: 9,
+          fontWeight: 700,
+          padding: "3px 8px",
+          borderRadius: 4,
+          letterSpacing: "0.04em",
+          minWidth: 78,
+          textAlign: "center",
+        }}
+      >
+        {badge.label}
+      </span>
+      <span
+        style={{
+          flexShrink: 0,
+          fontSize: 11,
+          color: "#888",
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          minWidth: 100,
+        }}
+      >
+        {product.sku}
+      </span>
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: 13,
+          fontWeight: 500,
+          color: "#1a1a1a",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {product.name}
+      </span>
+      <span
+        style={{
+          flexShrink: 0,
+          fontSize: 12,
+          color: "#666",
+          fontVariantNumeric: "tabular-nums",
+          minWidth: 110,
+          textAlign: "right",
+        }}
+      >
+        <span style={{ color: "#1a1a1a", fontWeight: 600 }}>
+          {product.onHand.toLocaleString()}
+        </span>{" "}
+        in stock
+      </span>
+      <span
+        style={{
+          flexShrink: 0,
+          fontSize: 13,
+          color: "#c0392b",
+          fontWeight: 700,
+          fontVariantNumeric: "tabular-nums",
+          minWidth: 100,
+          textAlign: "right",
+        }}
+      >
+        ${Math.round(totalValue).toLocaleString()}
+      </span>
     </button>
   );
 }

@@ -5,7 +5,7 @@ import type { InventoryStatus, ProductView } from "@/lib/types";
 import { ApiKeyManager } from "./ApiKeyManager";
 import { QuantityModal, type ActionKind } from "./QuantityModal";
 import { Toast, type ToastState } from "./Toast";
-import { Header } from "./Header";
+import { Header, type SortKey } from "./Header";
 import type { ActivityEntry } from "./ActivityFeed";
 
 interface DashboardProps {
@@ -37,17 +37,6 @@ const actionVerbFail: Record<ActionKind, string> = {
 
 function newActivityId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// Deterministic per-SKU unit value ($1–$120). The schema has no unit_cost
-// column — this gives stable values for Total Value and the card footer.
-function hashStr(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-function unitCostFor(sku: string): number {
-  return 1 + (hashStr(sku) % 11900) / 100;
 }
 
 const CATEGORY_EMOJI: Record<string, string> = {
@@ -85,31 +74,22 @@ function emojiFor(category: string): string {
   return CATEGORY_EMOJI[key] ?? "📦";
 }
 
-type TabKey = "all" | "low" | "category" | "recent";
+type TabKey = "all" | "low" | "category";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "all", label: "All Items" },
   { key: "low", label: "Low Stock" },
   { key: "category", label: "By Category" },
-  { key: "recent", label: "Recently Updated" },
 ];
 
-const STOCK_BADGE: Record<
-  "in" | "low" | "new",
+const STATUS_BADGE: Record<
+  InventoryStatus,
   { label: string; bg: string; fg: string }
 > = {
-  in: { label: "In Stock", bg: "#d1fae5", fg: "#065f46" },
-  low: { label: "Low Stock", bg: "#fef3c7", fg: "#92400e" },
-  new: { label: "New", bg: "#dbeafe", fg: "#1e40af" },
+  OK: { label: "In Stock", bg: "#d1fae5", fg: "#065f46" },
+  "LOW STOCK": { label: "Low Stock", bg: "#fef3c7", fg: "#92400e" },
+  "OUT OF STOCK": { label: "Critical", bg: "#fee2e2", fg: "#991b1b" },
 };
-
-function badgeFor(p: ProductView): keyof typeof STOCK_BADGE {
-  if (p.status !== "OK") return "low";
-  // Sprinkle "New" badges deterministically (~14% of healthy items) for visual
-  // variety. Switch to a real created_at signal once the schema has one.
-  if (hashStr(p.id) % 7 === 0) return "new";
-  return "in";
-}
 
 export function Dashboard({ instanceName }: DashboardProps) {
   const [products, setProducts] = useState<ProductView[] | null>(null);
@@ -117,6 +97,8 @@ export function Dashboard({ instanceName }: DashboardProps) {
 
   const [tab, setTab] = useState<TabKey>("all");
   const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   const [modal, setModal] = useState<ModalState | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -171,20 +153,24 @@ export function Dashboard({ instanceName }: DashboardProps) {
     return () => clearTimeout(id);
   }, [toast]);
 
+  // Close dropdown menu when clicking outside
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const close = () => setMenuOpenId(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [menuOpenId]);
+
   const stats = useMemo(() => {
     const list = products ?? [];
     const total = list.length;
-    const lowStock = list.filter(
-      (p) => p.status !== "OK",
-    ).length;
+    const lowStock = list.filter((p) => p.status !== "OK").length;
     const inStock = list.filter((p) => p.status === "OK").length;
-    const totalValue = list.reduce(
-      (sum, p) => sum + p.onHand * unitCostFor(p.sku),
-      0,
-    );
+    const totalOnHand = list.reduce((s, p) => s + p.onHand, 0);
+    const totalReserved = list.reduce((s, p) => s + p.reserved, 0);
     const categories = new Set(list.map((p) => p.category)).size;
     const availability = total === 0 ? 0 : Math.round((inStock / total) * 100);
-    return { total, lowStock, totalValue, categories, availability };
+    return { total, lowStock, totalOnHand, totalReserved, categories, availability };
   }, [products]);
 
   const filteredProducts = useMemo(() => {
@@ -199,23 +185,39 @@ export function Dashboard({ instanceName }: DashboardProps) {
           p.category.toLowerCase().includes(q),
       );
     }
-    switch (tab) {
-      case "low":
-        return scoped.filter((p) => p.status !== "OK");
-      case "category":
-        return [...scoped].sort((a, b) => {
-          const c = a.category.localeCompare(b.category);
-          return c !== 0 ? c : a.name.localeCompare(b.name);
-        });
-      case "recent":
-        // No updated_at in the schema yet. Reverse order as a placeholder so
-        // the tab visually differs from "All Items".
-        return [...scoped].reverse();
-      case "all":
-      default:
-        return scoped;
+    if (tab === "low") scoped = scoped.filter((p) => p.status !== "OK");
+    if (tab === "category") {
+      scoped = [...scoped].sort((a, b) => {
+        const c = a.category.localeCompare(b.category);
+        return c !== 0 ? c : a.name.localeCompare(b.name);
+      });
     }
-  }, [products, search, tab]);
+
+    const sorted = [...scoped];
+    if (tab !== "category") {
+      // sort respects sortKey when not in category-grouped view
+      sorted.sort((a, b) => {
+        switch (sortKey) {
+          case "quantity":
+            return b.onHand - a.onHand;
+          case "reserved":
+            return b.reserved - a.reserved;
+          case "status": {
+            const order: Record<InventoryStatus, number> = {
+              "OUT OF STOCK": 0,
+              "LOW STOCK": 1,
+              OK: 2,
+            };
+            return order[a.status] - order[b.status];
+          }
+          case "name":
+          default:
+            return a.name.localeCompare(b.name);
+        }
+      });
+    }
+    return sorted;
+  }, [products, search, tab, sortKey]);
 
   const appendActivity = useCallback((entry: ActivityEntry) => {
     setActivity((prev) => [entry, ...prev].slice(0, ACTIVITY_MAX));
@@ -257,7 +259,6 @@ export function Dashboard({ instanceName }: DashboardProps) {
           | { success?: boolean; error?: string; product?: ProductView }
           | null;
         const ok = res.ok && body?.success === true;
-
         if (!ok) {
           throw new Error(body?.error ?? `Request failed (HTTP ${res.status})`);
         }
@@ -303,13 +304,51 @@ export function Dashboard({ instanceName }: DashboardProps) {
     [modal, fetchInventory, appendActivity],
   );
 
+  const handleAddItem = useCallback(() => {
+    setToast({
+      id: Date.now(),
+      kind: "error",
+      message:
+        "Add Item is not wired to a backend route yet on this instance. Use Adjust/Restock to manage existing SKUs.",
+    });
+  }, []);
+
+  const handleMenuOption = useCallback(
+    (p: ProductView, option: "edit" | "adjust" | "history" | "archive") => {
+      setMenuOpenId(null);
+      if (option === "edit" || option === "adjust") {
+        handleAction(p, "adjust");
+        return;
+      }
+      if (option === "history") {
+        setToast({
+          id: Date.now(),
+          kind: "error",
+          message: `No history endpoint available for ${p.sku}.`,
+        });
+        return;
+      }
+      if (option === "archive") {
+        setToast({
+          id: Date.now(),
+          kind: "error",
+          message: `Archive isn't supported by the inventory API on this instance.`,
+        });
+      }
+    },
+    [handleAction],
+  );
+
   return (
     <div style={{ background: "#fafafa", minHeight: "100vh" }}>
       <Header
         instanceName={instanceName}
         searchValue={search}
         onSearchChange={setSearch}
+        sortKey={sortKey}
+        onSortChange={setSortKey}
         onOpenApiKeys={() => setApiKeysOpen(true)}
+        onAddItem={handleAddItem}
       />
 
       {/* Tabs */}
@@ -358,15 +397,8 @@ export function Dashboard({ instanceName }: DashboardProps) {
         }}
       >
         <StatCell label="Total Items" value={String(stats.total)} />
-        <StatCell
-          label="Low Stock"
-          value={String(stats.lowStock)}
-          valueColor="#c0392b"
-        />
-        <StatCell
-          label="Total Value"
-          value={`$${(stats.totalValue / 1000).toFixed(1)}k`}
-        />
+        <StatCell label="Low Stock" value={String(stats.lowStock)} valueColor="#c0392b" />
+        <StatCell label="Total On Hand" value={stats.totalOnHand.toLocaleString()} />
         <StatCell label="Categories" value={String(stats.categories)} />
         <StatCell
           label="Availability"
@@ -407,13 +439,20 @@ export function Dashboard({ instanceName }: DashboardProps) {
               display: "grid",
               gridTemplateColumns: "repeat(3, 1fr)",
               gap: 10,
+              transition: "all 0.2s ease",
             }}
           >
             {filteredProducts.map((p) => (
               <ProductCard
                 key={p.id}
                 product={p}
-                onClick={() => handleAction(p, "adjust")}
+                menuOpen={menuOpenId === p.id}
+                onToggleMenu={(e) => {
+                  e.stopPropagation();
+                  setMenuOpenId((cur) => (cur === p.id ? null : p.id));
+                }}
+                onMenuOption={(opt) => handleMenuOption(p, opt)}
+                onCardClick={() => handleAction(p, "adjust")}
               />
             ))}
           </div>
@@ -490,109 +529,197 @@ function StatCell({
 
 function ProductCard({
   product,
-  onClick,
+  menuOpen,
+  onToggleMenu,
+  onMenuOption,
+  onCardClick,
 }: {
   product: ProductView;
-  onClick: () => void;
+  menuOpen: boolean;
+  onToggleMenu: (e: React.MouseEvent) => void;
+  onMenuOption: (opt: "edit" | "adjust" | "history" | "archive") => void;
+  onCardClick: () => void;
 }) {
-  const badgeKind = badgeFor(product);
-  const badge = STOCK_BADGE[badgeKind];
-  const cost = unitCostFor(product.sku);
-  const totalValue = product.onHand * cost;
+  const badge = STATUS_BADGE[product.status];
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       style={{
         background: "#ffffff",
         border: "1px solid #f0f0f0",
         borderRadius: 10,
         overflow: "hidden",
-        cursor: "pointer",
-        textAlign: "left",
-        padding: 0,
-        transition: "border-color 120ms ease",
+        position: "relative",
+        transition: "all 0.2s ease",
       }}
       onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#e0e0e0")}
       onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#f0f0f0")}
     >
-      <div
+      <button
+        type="button"
+        onClick={onCardClick}
         style={{
-          position: "relative",
-          height: 80,
-          background: "#f7f7f7",
+          all: "unset",
+          display: "block",
+          width: "100%",
+          cursor: "pointer",
+        }}
+      >
+        <div
+          style={{
+            position: "relative",
+            height: 80,
+            background: "#f7f7f7",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 32,
+          }}
+          aria-hidden
+        >
+          {emojiFor(product.category)}
+          <span
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              background: badge.bg,
+              color: badge.fg,
+              fontSize: 9,
+              textTransform: "uppercase",
+              fontWeight: 700,
+              padding: "2px 6px",
+              borderRadius: 4,
+              letterSpacing: "0.04em",
+            }}
+          >
+            {badge.label}
+          </span>
+        </div>
+        <div style={{ padding: "10px 12px" }}>
+          <div
+            style={{
+              fontSize: 9,
+              color: "#888",
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            }}
+          >
+            {product.sku}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#1a1a1a",
+              marginTop: 2,
+              lineHeight: 1.3,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {product.name}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              marginTop: 8,
+              fontSize: 11,
+            }}
+          >
+            <span style={{ color: "#666" }}>
+              <span style={{ fontWeight: 600, color: "#1a1a1a" }}>{product.onHand}</span>{" "}
+              on hand
+            </span>
+            <span style={{ color: "#888" }}>
+              {product.reserved} reserved
+            </span>
+          </div>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleMenu}
+        aria-label="More actions"
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 6,
+          width: 24,
+          height: 24,
+          borderRadius: 6,
+          background: "rgba(255,255,255,0.9)",
+          border: "1px solid #f0f0f0",
+          cursor: "pointer",
+          fontSize: 14,
+          lineHeight: 1,
+          color: "#666",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: 32,
         }}
-        aria-hidden
       >
-        {emojiFor(product.category)}
-        <span
+        ⋯
+      </button>
+
+      {menuOpen ? (
+        <div
+          onClick={(e) => e.stopPropagation()}
           style={{
             position: "absolute",
-            top: 8,
-            left: 8,
-            background: badge.bg,
-            color: badge.fg,
-            fontSize: 9,
-            textTransform: "uppercase",
-            fontWeight: 700,
-            padding: "2px 6px",
-            borderRadius: 4,
-            letterSpacing: "0.04em",
+            top: 32,
+            right: 6,
+            background: "#ffffff",
+            border: "1px solid #e0e0e0",
+            borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+            padding: 4,
+            zIndex: 10,
+            minWidth: 160,
           }}
         >
-          {badge.label}
-        </span>
-      </div>
-      <div style={{ padding: "10px 12px" }}>
-        <div
-          style={{
-            fontSize: 9,
-            color: "#888",
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          }}
-        >
-          {product.sku}
+          <MenuItem onClick={() => onMenuOption("edit")}>Edit</MenuItem>
+          <MenuItem onClick={() => onMenuOption("adjust")}>Adjust Quantity</MenuItem>
+          <MenuItem onClick={() => onMenuOption("history")}>View History</MenuItem>
+          <MenuItem onClick={() => onMenuOption("archive")} danger>
+            Archive
+          </MenuItem>
         </div>
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: "#1a1a1a",
-            marginTop: 2,
-            lineHeight: 1.3,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {product.name}
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            marginTop: 8,
-            fontSize: 11,
-          }}
-        >
-          <span style={{ color: "#666" }}>
-            <span style={{ fontWeight: 600, color: "#1a1a1a" }}>{product.onHand}</span>{" "}
-            in stock
-          </span>
-          <span style={{ color: "#c0392b", fontWeight: 700 }}>
-            ${totalValue.toFixed(0)}
-          </span>
-        </div>
-      </div>
-    </button>
+      ) : null}
+    </div>
   );
 }
 
-// Suppress unused-import for InventoryStatus — kept so future filters/badges
-// can reference the type without re-importing.
-export type { InventoryStatus };
+function MenuItem({
+  onClick,
+  danger,
+  children,
+}: {
+  onClick: () => void;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        all: "unset",
+        display: "block",
+        width: "100%",
+        padding: "8px 10px",
+        fontSize: 12,
+        color: danger ? "#c0392b" : "#1a1a1a",
+        cursor: "pointer",
+        borderRadius: 4,
+        boxSizing: "border-box",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "#f7f7f7")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    >
+      {children}
+    </button>
+  );
+}

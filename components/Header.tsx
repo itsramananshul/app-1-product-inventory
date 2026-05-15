@@ -1,13 +1,33 @@
 "use client";
 
+export type SortKey = "name" | "quantity" | "reserved" | "status";
+
 interface HeaderProps {
   instanceName: string;
   searchValue: string;
   onSearchChange: (v: string) => void;
+  sortKey: SortKey;
+  onSortChange: (key: SortKey) => void;
   onOpenApiKeys: () => void;
+  onAddItem: () => void;
 }
 
-export function Header({ instanceName, searchValue, onSearchChange, onOpenApiKeys }: HeaderProps) {
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "name", label: "Name (A–Z)" },
+  { value: "quantity", label: "Quantity (high → low)" },
+  { value: "reserved", label: "Reserved (high → low)" },
+  { value: "status", label: "Status" },
+];
+
+export function Header({
+  instanceName,
+  searchValue,
+  onSearchChange,
+  sortKey,
+  onSortChange,
+  onOpenApiKeys,
+  onAddItem,
+}: HeaderProps) {
   return (
     <header
       style={{
@@ -49,11 +69,11 @@ export function Header({ instanceName, searchValue, onSearchChange, onOpenApiKey
       <div className="ml-auto flex items-center gap-2">
         <input
           type="search"
-          placeholder="Search products…"
+          placeholder="Search products by name or SKU…"
           value={searchValue}
           onChange={(e) => onSearchChange(e.target.value)}
           style={{
-            width: 200,
+            width: 220,
             border: "1.5px solid #f0f0f0",
             borderRadius: 20,
             background: "#fafafa",
@@ -65,6 +85,28 @@ export function Header({ instanceName, searchValue, onSearchChange, onOpenApiKey
           onFocus={(e) => (e.currentTarget.style.borderColor = "#e0e0e0")}
           onBlur={(e) => (e.currentTarget.style.borderColor = "#f0f0f0")}
         />
+        <select
+          value={sortKey}
+          onChange={(e) => onSortChange(e.target.value as SortKey)}
+          style={{
+            border: "1.5px solid #f0f0f0",
+            background: "#fafafa",
+            color: "#444",
+            padding: "6px 12px",
+            borderRadius: 20,
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: "pointer",
+            outline: "none",
+          }}
+          aria-label="Sort by"
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              Sort: {o.label}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           onClick={onOpenApiKeys}
@@ -102,6 +144,7 @@ export function Header({ instanceName, searchValue, onSearchChange, onOpenApiKey
         </button>
         <button
           type="button"
+          onClick={onAddItem}
           style={{
             border: "none",
             background: "#c0392b",

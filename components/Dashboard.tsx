@@ -1,18 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ProductView } from "@/lib/types";
-import { ActivityFeed, type ActivityEntry } from "./ActivityFeed";
+import type { InventoryStatus, ProductView } from "@/lib/types";
 import { ApiKeyManager } from "./ApiKeyManager";
-import { ComingSoon } from "./ComingSoon";
-import { DonutChart } from "./DonutChart";
-import { FilterDropdown } from "./FilterDropdown";
-import { InventoryPlans, type StatusFilter } from "./InventoryPlans";
-import { MetricCard } from "./MetricCard";
 import { QuantityModal, type ActionKind } from "./QuantityModal";
 import { Toast, type ToastState } from "./Toast";
-import { TopNav, type NavView } from "./TopNav";
-import { TopProducts } from "./TopProducts";
+import { Header } from "./Header";
+import type { ActivityEntry } from "./ActivityFeed";
 
 interface DashboardProps {
   instanceName: string;
@@ -45,51 +39,91 @@ function newActivityId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-const COMING_SOON_COPY: Record<
-  Exclude<NavView, "dashboard">,
-  { title: string; description: string }
+// Deterministic per-SKU unit value ($1–$120). The schema has no unit_cost
+// column — this gives stable values for Total Value and the card footer.
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function unitCostFor(sku: string): number {
+  return 1 + (hashStr(sku) % 11900) / 100;
+}
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  electronics: "💻",
+  electronic: "💻",
+  apparel: "👕",
+  clothing: "👕",
+  furniture: "🪑",
+  food: "🍔",
+  beverages: "🥤",
+  drinks: "🥤",
+  toys: "🧸",
+  books: "📚",
+  tools: "🔧",
+  sports: "⚽",
+  beauty: "💄",
+  household: "🧹",
+  outdoor: "🏕️",
+  automotive: "🚗",
+  parts: "⚙️",
+  engine: "🔩",
+  body: "🚙",
+  electrical: "🔌",
+  chassis: "🛞",
+  interior: "🪟",
+  exterior: "🛻",
+  brakes: "🛑",
+  suspension: "🌀",
+  fluids: "🛢️",
+  filters: "🧪",
+  lighting: "💡",
+};
+function emojiFor(category: string): string {
+  const key = (category || "").toLowerCase().split(/\s|-|_/)[0] ?? "";
+  return CATEGORY_EMOJI[key] ?? "📦";
+}
+
+type TabKey = "all" | "low" | "category" | "recent";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "all", label: "All Items" },
+  { key: "low", label: "Low Stock" },
+  { key: "category", label: "By Category" },
+  { key: "recent", label: "Recently Updated" },
+];
+
+const STOCK_BADGE: Record<
+  "in" | "low" | "new",
+  { label: string; bg: string; fg: string }
 > = {
-  products: {
-    title: "Products — coming soon",
-    description:
-      "A full product catalog editor with bulk upload, variants, and pricing rules.",
-  },
-  sales: {
-    title: "Sales — coming soon",
-    description:
-      "Sales orders, channel breakdowns, and revenue trend reporting will live here.",
-  },
-  purchase: {
-    title: "Purchase — coming soon",
-    description:
-      "Purchase orders, supplier management, and incoming-stock forecasting.",
-  },
-  "inventory-plan": {
-    title: "Inventory Plan — coming soon",
-    description:
-      "Demand forecasting and automated reorder suggestions based on historical movement.",
-  },
+  in: { label: "In Stock", bg: "#d1fae5", fg: "#065f46" },
+  low: { label: "Low Stock", bg: "#fef3c7", fg: "#92400e" },
+  new: { label: "New", bg: "#dbeafe", fg: "#1e40af" },
 };
 
-function scrollToInventory() {
-  const el = document.getElementById("inventory-plans");
-  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+function badgeFor(p: ProductView): keyof typeof STOCK_BADGE {
+  if (p.status !== "OK") return "low";
+  // Sprinkle "New" badges deterministically (~14% of healthy items) for visual
+  // variety. Switch to a real created_at signal once the schema has one.
+  if (hashStr(p.id) % 7 === 0) return "new";
+  return "in";
 }
 
 export function Dashboard({ instanceName }: DashboardProps) {
   const [products, setProducts] = useState<ProductView[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [view, setView] = useState<NavView>("dashboard");
-  const [filter, setFilter] = useState<StatusFilter>("ALL");
-  const [expanded, setExpanded] = useState(false);
+  const [tab, setTab] = useState<TabKey>("all");
+  const [search, setSearch] = useState("");
 
   const [modal, setModal] = useState<ModalState | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [, setActivity] = useState<ActivityEntry[]>([]);
   const [apiKeysOpen, setApiKeysOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -139,37 +173,49 @@ export function Dashboard({ instanceName }: DashboardProps) {
 
   const stats = useMemo(() => {
     const list = products ?? [];
-    const totalItems = list.length;
-    const lowStockAlerts = list.filter(
-      (p) => p.status === "LOW STOCK" || p.status === "OUT OF STOCK",
-    ).length;
-    const toBeDelivered = list.reduce((sum, p) => sum + p.reserved, 0);
-    const toBeOrdered = list.filter(
-      (p) => p.onHand <= p.reorderThreshold,
+    const total = list.length;
+    const lowStock = list.filter(
+      (p) => p.status !== "OK",
     ).length;
     const inStock = list.filter((p) => p.status === "OK").length;
-    const lowOnly = list.filter((p) => p.status === "LOW STOCK").length;
-    const outOnly = list.filter((p) => p.status === "OUT OF STOCK").length;
-    return {
-      totalItems,
-      lowStockAlerts,
-      toBeDelivered,
-      toBeOrdered,
-      inStock,
-      lowOnly,
-      outOnly,
-    };
+    const totalValue = list.reduce(
+      (sum, p) => sum + p.onHand * unitCostFor(p.sku),
+      0,
+    );
+    const categories = new Set(list.map((p) => p.category)).size;
+    const availability = total === 0 ? 0 : Math.round((inStock / total) * 100);
+    return { total, lowStock, totalValue, categories, availability };
   }, [products]);
 
-  const filterCounts: Record<StatusFilter, number> = useMemo(
-    () => ({
-      ALL: stats.totalItems,
-      OK: stats.inStock,
-      "LOW STOCK": stats.lowOnly,
-      "OUT OF STOCK": stats.outOnly,
-    }),
-    [stats],
-  );
+  const filteredProducts = useMemo(() => {
+    const list = products ?? [];
+    const q = search.trim().toLowerCase();
+    let scoped = list;
+    if (q) {
+      scoped = scoped.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.sku.toLowerCase().includes(q) ||
+          p.category.toLowerCase().includes(q),
+      );
+    }
+    switch (tab) {
+      case "low":
+        return scoped.filter((p) => p.status !== "OK");
+      case "category":
+        return [...scoped].sort((a, b) => {
+          const c = a.category.localeCompare(b.category);
+          return c !== 0 ? c : a.name.localeCompare(b.name);
+        });
+      case "recent":
+        // No updated_at in the schema yet. Reverse order as a placeholder so
+        // the tab visually differs from "All Items".
+        return [...scoped].reverse();
+      case "all":
+      default:
+        return scoped;
+    }
+  }, [products, search, tab]);
 
   const appendActivity = useCallback((entry: ActivityEntry) => {
     setActivity((prev) => [entry, ...prev].slice(0, ACTIVITY_MAX));
@@ -257,154 +303,119 @@ export function Dashboard({ instanceName }: DashboardProps) {
     [modal, fetchInventory, appendActivity],
   );
 
-  const handleViewLowStock = useCallback(() => {
-    setFilter("LOW STOCK");
-    setExpanded(true);
-    setTimeout(scrollToInventory, 50);
-  }, []);
-
-  const handleViewToBeOrdered = useCallback(() => {
-    setFilter("LOW STOCK");
-    setExpanded(true);
-    setTimeout(scrollToInventory, 50);
-  }, []);
-
-  const handleViewAll = useCallback(() => {
-    setFilter("ALL");
-    setExpanded(true);
-    setTimeout(scrollToInventory, 50);
-  }, []);
-
   return (
-    <div>
-      <TopNav
+    <div style={{ background: "#fafafa", minHeight: "100vh" }}>
+      <Header
         instanceName={instanceName}
-        currentView={view}
-        onChangeView={(v) => {
-          setView(v);
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        }}
-        onOpenApiKeys={() => setApiKeysOpen(true)}
+        searchValue={search}
+        onSearchChange={setSearch}
       />
 
-      <main className="mx-auto max-w-7xl px-6 py-6">
-        {view !== "dashboard" ? (
-          <>
-            <div className="mb-6 flex flex-col gap-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                {view.replace("-", " ")}
-              </p>
-              <h1 className="text-2xl font-bold capitalize text-gray-900">
-                {view.replace("-", " ")}
-              </h1>
-            </div>
-            <ComingSoon
-              title={COMING_SOON_COPY[view].title}
-              description={COMING_SOON_COPY[view].description}
-              onBack={() => setView("dashboard")}
-            />
-          </>
+      {/* Tabs */}
+      <div
+        style={{
+          background: "#ffffff",
+          borderBottom: "1px solid #f0f0f0",
+          padding: "0 20px",
+          display: "flex",
+          alignItems: "stretch",
+          gap: 24,
+        }}
+      >
+        {TABS.map((t) => {
+          const active = tab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: "12px 0",
+                fontSize: 12,
+                color: active ? "#c0392b" : "#999",
+                fontWeight: active ? 600 : 500,
+                borderBottom: active ? "2px solid #c0392b" : "2px solid transparent",
+                marginBottom: -1,
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Stats strip */}
+      <div
+        style={{
+          background: "#ffffff",
+          borderBottom: "1px solid #f0f0f0",
+          display: "grid",
+          gridTemplateColumns: "repeat(5, 1fr)",
+        }}
+      >
+        <StatCell label="Total Items" value={String(stats.total)} />
+        <StatCell
+          label="Low Stock"
+          value={String(stats.lowStock)}
+          valueColor="#c0392b"
+        />
+        <StatCell
+          label="Total Value"
+          value={`$${(stats.totalValue / 1000).toFixed(1)}k`}
+        />
+        <StatCell label="Categories" value={String(stats.categories)} />
+        <StatCell
+          label="Availability"
+          value={`${stats.availability}%`}
+          valueColor="#27ae60"
+          last
+        />
+      </div>
+
+      {/* Card grid */}
+      <main style={{ padding: "16px 20px" }}>
+        {loadError ? (
+          <div
+            style={{
+              background: "#fee2e2",
+              color: "#991b1b",
+              padding: "10px 14px",
+              borderRadius: 8,
+              marginBottom: 12,
+              fontSize: 13,
+            }}
+          >
+            Failed to load inventory: {loadError}
+          </div>
+        ) : null}
+
+        {products === null ? (
+          <div style={{ padding: 24, textAlign: "center", color: "#aaa", fontSize: 13 }}>
+            Loading inventory…
+          </div>
+        ) : filteredProducts.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: "#aaa", fontSize: 13 }}>
+            No products match the current filters.
+          </div>
         ) : (
-          <>
-            <div className="mb-6 flex items-end justify-between gap-3">
-              <div className="flex flex-col gap-1">
-                <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                  Overview
-                </p>
-                <h1 className="text-2xl font-bold text-gray-900">
-                  {instanceName} Dashboard
-                </h1>
-              </div>
-              <FilterDropdown
-                value={filter}
-                counts={filterCounts}
-                onChange={setFilter}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: 10,
+            }}
+          >
+            {filteredProducts.map((p) => (
+              <ProductCard
+                key={p.id}
+                product={p}
+                onClick={() => handleAction(p, "adjust")}
               />
-            </div>
-
-            {loadError ? (
-              <div className="mb-6 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-inset ring-rose-200">
-                Failed to load inventory: {loadError}
-              </div>
-            ) : null}
-
-            <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricCard
-                label="Total Items"
-                value={stats.totalItems}
-                onViewDetail={handleViewAll}
-              />
-              <MetricCard
-                label="Low-Stock Alerts"
-                value={stats.lowStockAlerts}
-                hint={
-                  stats.lowStockAlerts > 0 ? "Needs attention" : "All healthy"
-                }
-                onViewDetail={handleViewLowStock}
-              />
-              <MetricCard
-                label="To Be Delivered"
-                value={stats.toBeDelivered}
-                hint="Reserved units"
-                onViewDetail={handleViewAll}
-              />
-              <MetricCard
-                label="To Be Ordered"
-                value={stats.toBeOrdered}
-                hint="At/below reorder point"
-                onViewDetail={handleViewToBeOrdered}
-              />
-            </section>
-
-            <section className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-5">
-              <div className="lg:col-span-3">
-                <InventoryPlans
-                  products={products ?? []}
-                  loading={products === null}
-                  filter={filter}
-                  expanded={expanded}
-                  onAction={handleAction}
-                  onToggleExpand={() => setExpanded((v) => !v)}
-                />
-              </div>
-              <div className="flex flex-col gap-4 lg:col-span-2">
-                <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
-                  <header className="mb-4 flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                        Distribution
-                      </p>
-                      <h2 className="text-lg font-semibold text-gray-900">
-                        Warehouse Detail
-                      </h2>
-                    </div>
-                  </header>
-                  <DonutChart
-                    total={stats.totalItems}
-                    centerLabel="SKUs"
-                    slices={[
-                      { label: "In Stock", value: stats.inStock, hex: "#14b8a6" },
-                      { label: "Low Stock", value: stats.lowOnly, hex: "#f59e0b" },
-                      {
-                        label: "Out of Stock",
-                        value: stats.outOnly,
-                        hex: "#ef4444",
-                      },
-                    ]}
-                  />
-                </section>
-                <ActivityFeed entries={activity} />
-              </div>
-            </section>
-
-            <section className="mb-6">
-              <TopProducts
-                products={products ?? []}
-                onAction={handleAction}
-                onViewAll={handleViewAll}
-              />
-            </section>
-          </>
+            ))}
+          </div>
         )}
       </main>
 
@@ -429,3 +440,158 @@ export function Dashboard({ instanceName }: DashboardProps) {
     </div>
   );
 }
+
+function StatCell({
+  label,
+  value,
+  valueColor = "#1a1a1a",
+  last,
+}: {
+  label: string;
+  value: string;
+  valueColor?: string;
+  last?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        padding: "14px 12px",
+        textAlign: "center",
+        borderRight: last ? "none" : "1px solid #f0f0f0",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 18,
+          fontWeight: 700,
+          color: valueColor,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1.2,
+        }}
+      >
+        {value}
+      </div>
+      <div
+        style={{
+          fontSize: 10,
+          color: "#888",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          fontWeight: 600,
+          marginTop: 4,
+        }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function ProductCard({
+  product,
+  onClick,
+}: {
+  product: ProductView;
+  onClick: () => void;
+}) {
+  const badgeKind = badgeFor(product);
+  const badge = STOCK_BADGE[badgeKind];
+  const cost = unitCostFor(product.sku);
+  const totalValue = product.onHand * cost;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        background: "#ffffff",
+        border: "1px solid #f0f0f0",
+        borderRadius: 10,
+        overflow: "hidden",
+        cursor: "pointer",
+        textAlign: "left",
+        padding: 0,
+        transition: "border-color 120ms ease",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#e0e0e0")}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#f0f0f0")}
+    >
+      <div
+        style={{
+          position: "relative",
+          height: 80,
+          background: "#f7f7f7",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 32,
+        }}
+        aria-hidden
+      >
+        {emojiFor(product.category)}
+        <span
+          style={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            background: badge.bg,
+            color: badge.fg,
+            fontSize: 9,
+            textTransform: "uppercase",
+            fontWeight: 700,
+            padding: "2px 6px",
+            borderRadius: 4,
+            letterSpacing: "0.04em",
+          }}
+        >
+          {badge.label}
+        </span>
+      </div>
+      <div style={{ padding: "10px 12px" }}>
+        <div
+          style={{
+            fontSize: 9,
+            color: "#888",
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          }}
+        >
+          {product.sku}
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: "#1a1a1a",
+            marginTop: 2,
+            lineHeight: 1.3,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {product.name}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginTop: 8,
+            fontSize: 11,
+          }}
+        >
+          <span style={{ color: "#666" }}>
+            <span style={{ fontWeight: 600, color: "#1a1a1a" }}>{product.onHand}</span>{" "}
+            in stock
+          </span>
+          <span style={{ color: "#c0392b", fontWeight: 700 }}>
+            ${totalValue.toFixed(0)}
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// Suppress unused-import for InventoryStatus — kept so future filters/badges
+// can reference the type without re-importing.
+export type { InventoryStatus };

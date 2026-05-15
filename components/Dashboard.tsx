@@ -309,6 +309,7 @@ export function Dashboard({ instanceName }: DashboardProps) {
         instanceName={instanceName}
         searchValue={search}
         onSearchChange={setSearch}
+        onOpenApiKeys={() => setApiKeysOpen(true)}
       />
 
       {/* Tabs */}
